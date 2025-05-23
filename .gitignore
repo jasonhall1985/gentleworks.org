@@ -1,0 +1,37 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+venv/
+env/
+.env/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Model files (these should be downloaded separately or generated)
+models/*.h5
+models/*.pkl
+
+# Temporary files
+temp_video.mp4
+
+# Logs
+*.log
+
+# OS specific
+.DS_Store
+Thumbs.db
