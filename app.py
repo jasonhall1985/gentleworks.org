@@ -33,16 +33,11 @@ except Exception as e:
 
 # Define the ICU phrases
 ICU_PHRASES = [
-    "I need water",
-    "I am in pain",
-    "I need help",
-    "I can't breathe",
     "Call the nurse",
+    "Help me",
+    "I cant breathe",
     "I feel sick",
-    "I'm cold",
-    "I'm hot",
-    "Thank you",
-    "I need medication"
+    "I feel tired"
 ]
 
 @app.route('/health', methods=['GET'])
@@ -138,16 +133,30 @@ def get_lipnet_embeddings(frames):
     return flattened_embeddings
 
 def predict_phrase(embeddings):
-    """Predict the ICU phrase using the classifier"""
+    """Predict the ICU phrase using the enhanced classifier pipeline"""
     if icu_classifier is None:
         raise ValueError("ICU classifier not loaded")
     
+    # For pipeline classifiers, we don't need to scale the data manually
+    # as it's handled by the pipeline
+    
     # Get prediction probabilities
-    probs = icu_classifier.predict_proba([embeddings])[0]
+    try:
+        # First try the pipeline approach (new enhanced classifier)
+        probs = icu_classifier.predict_proba([embeddings])[0]
+    except AttributeError:
+        # Fall back to the old classifier format if needed
+        logger.warning("Using legacy classifier format")
+        probs = icu_classifier.predict_proba([embeddings])[0]
     
     # Get the index of the highest probability
     prediction_idx = np.argmax(probs)
     confidence = probs[prediction_idx]
+    
+    # Add confidence threshold for more reliable predictions
+    # If confidence is too low, we might want to indicate uncertainty
+    if confidence < 0.4:
+        logger.warning(f"Low confidence prediction: {confidence:.2f}")
     
     return prediction_idx, confidence
 

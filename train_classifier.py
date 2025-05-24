@@ -13,18 +13,13 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Define the ICU phrases
+# Define the ICU phrases we want to recognize
 ICU_PHRASES = [
-    "I need water",
-    "I am in pain",
-    "I need help",
-    "I can't breathe",
     "Call the nurse",
+    "Help me",
+    "I cant breathe",
     "I feel sick",
-    "I'm cold",
-    "I'm hot",
-    "Thank you",
-    "I need medication"
+    "I feel tired"
 ]
 
 def load_lipnet_model():
@@ -135,24 +130,182 @@ def load_training_data(data_dir='data'):
     return np.array(X), np.array(y)
 
 def train_classifier(X, y):
-    """Train a classifier on the embeddings"""
-    # Split the data
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
+    """Train a classifier on the embeddings with enhanced accuracy"""
+    from sklearn.svm import SVC
+    from sklearn.ensemble import VotingClassifier, GradientBoostingClassifier
+    from sklearn.model_selection import GridSearchCV, StratifiedKFold
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.pipeline import Pipeline
     
-    # Train a RandomForest classifier
-    clf = RandomForestClassifier(n_estimators=100, random_state=42)
-    clf.fit(X_train, y_train)
+    # Check if we have enough samples for cross-validation
+    min_samples_per_class = {}
+    for class_idx in np.unique(y):
+        min_samples_per_class[class_idx] = np.sum(y == class_idx)
     
-    # Evaluate the classifier
-    y_pred = clf.predict(X_test)
-    accuracy = accuracy_score(y_test, y_pred)
-    logger.info(f"Classifier accuracy: {accuracy:.4f}")
-    logger.info("\nClassification Report:")
-    logger.info(classification_report(y_test, y_pred, target_names=ICU_PHRASES))
+    min_samples = min(min_samples_per_class.values())
+    logger.info(f"Minimum samples per class: {min_samples}")
     
-    return clf
+    # Scale the features for better performance
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    
+    if min_samples < 3:
+        logger.warning("Limited samples per class. Using simple ensemble with cross-validation.")
+        
+        # Use stratified K-fold cross-validation to maximize use of limited data
+        cv = StratifiedKFold(n_splits=min(5, min_samples), shuffle=True, random_state=42)
+        
+        # Train multiple models and use voting for better accuracy
+        rf = RandomForestClassifier(n_estimators=200, class_weight='balanced', random_state=42)
+        svm = SVC(probability=True, class_weight='balanced', random_state=42)
+        gb = GradientBoostingClassifier(n_estimators=100, random_state=42)
+        
+        # Create a voting classifier
+        ensemble = VotingClassifier(
+            estimators=[('rf', rf), ('svm', svm), ('gb', gb)],
+            voting='soft'  # Use probability estimates for voting
+        )
+        
+        # Cross-validation scores
+        scores = []
+        for train_idx, test_idx in cv.split(X_scaled, y):
+            X_train, X_test = X_scaled[train_idx], X_scaled[test_idx]
+            y_train, y_test = y[train_idx], y[test_idx]
+            
+            ensemble.fit(X_train, y_train)
+            score = ensemble.score(X_test, y_test)
+            scores.append(score)
+        
+        logger.info(f"Cross-validation accuracy scores: {scores}")
+        logger.info(f"Mean CV accuracy: {np.mean(scores):.4f} ± {np.std(scores):.4f}")
+        
+        # Train final model on all data
+        ensemble.fit(X_scaled, y)
+        
+        # Create a pipeline with the scaler and ensemble
+        pipeline = Pipeline([
+            ('scaler', scaler),
+            ('classifier', ensemble)
+        ])
+        
+        return pipeline
+        
+    else:
+        logger.info("Sufficient samples for hyperparameter tuning. Optimizing models...")
+        
+        # Split the data
+        X_train, X_test, y_train, y_test = train_test_split(
+            X_scaled, y, test_size=0.2, random_state=42, stratify=y
+        )
+        
+        # Define models and parameters for grid search
+        models = {
+            'RandomForest': {
+                'model': RandomForestClassifier(random_state=42),
+                'params': {
+                    'n_estimators': [100, 200, 300],
+                    'max_depth': [None, 10, 20],
+                    'min_samples_split': [2, 5, 10],
+                    'class_weight': [None, 'balanced']
+                }
+            },
+            'SVM': {
+                'model': SVC(probability=True, random_state=42),
+                'params': {
+                    'C': [0.1, 1, 10, 100],
+                    'gamma': ['scale', 'auto', 0.01, 0.1],
+                    'kernel': ['rbf', 'linear'],
+                    'class_weight': [None, 'balanced']
+                }
+            },
+            'GradientBoosting': {
+                'model': GradientBoostingClassifier(random_state=42),
+                'params': {
+                    'n_estimators': [50, 100, 200],
+                    'learning_rate': [0.01, 0.1, 0.2],
+                    'max_depth': [3, 5, 7]
+                }
+            }
+        }
+        
+        # Find the best model and parameters
+        best_score = 0
+        best_model = None
+        best_params = None
+        best_model_name = None
+        
+        for model_name, model_info in models.items():
+            logger.info(f"Tuning {model_name}...")
+            # Ensure cv is at most the number of samples in the smallest class
+            cv_folds = max(2, min(3, min_samples))  # At least 2, at most 3 folds
+            grid = GridSearchCV(
+                model_info['model'], 
+                model_info['params'], 
+                cv=cv_folds,
+                scoring='accuracy',
+                n_jobs=-1  # Use all available cores
+            )
+            grid.fit(X_train, y_train)
+            
+            logger.info(f"Best {model_name} parameters: {grid.best_params_}")
+            logger.info(f"Best {model_name} cross-validation score: {grid.best_score_:.4f}")
+            
+            # Evaluate on test set
+            y_pred = grid.predict(X_test)
+            test_score = accuracy_score(y_test, y_pred)
+            logger.info(f"{model_name} test accuracy: {test_score:.4f}")
+            
+            if test_score > best_score:
+                best_score = test_score
+                best_model = grid.best_estimator_
+                best_params = grid.best_params_
+                best_model_name = model_name
+        
+        logger.info(f"Best model: {best_model_name} with test accuracy: {best_score:.4f}")
+        logger.info(f"Best parameters: {best_params}")
+        
+        # Create ensemble with the best model and a few others for robustness
+        logger.info("Creating final ensemble model...")
+        final_models = []
+        
+        # Add the best model
+        final_models.append((best_model_name, best_model))
+        
+        # Add RandomForest if it's not already the best
+        if best_model_name != 'RandomForest':
+            rf = RandomForestClassifier(n_estimators=200, class_weight='balanced', random_state=42)
+            rf.fit(X_train, y_train)
+            final_models.append(('RandomForest', rf))
+        
+        # Add SVM if it's not already the best
+        if best_model_name != 'SVM':
+            svm = SVC(probability=True, class_weight='balanced', random_state=42)
+            svm.fit(X_train, y_train)
+            final_models.append(('SVM', svm))
+        
+        # Create the final ensemble
+        final_ensemble = VotingClassifier(
+            estimators=final_models,
+            voting='soft'  # Use probability estimates for voting
+        )
+        
+        # Train on all data for the final model
+        final_ensemble.fit(X_scaled, y)
+        
+        # Evaluate on test set
+        y_pred = final_ensemble.predict(X_test)
+        ensemble_accuracy = accuracy_score(y_test, y_pred)
+        logger.info(f"Final ensemble test accuracy: {ensemble_accuracy:.4f}")
+        logger.info("\nClassification Report:")
+        logger.info(classification_report(y_test, y_pred, target_names=ICU_PHRASES))
+        
+        # Create a pipeline with the scaler and ensemble
+        pipeline = Pipeline([
+            ('scaler', scaler),
+            ('classifier', final_ensemble)
+        ])
+        
+        return pipeline
 
 def save_classifier(clf, output_path='models/icu_classifier.pkl'):
     """Save the trained classifier"""

@@ -1,9 +1,8 @@
 import os
 import sys
-import requests
 import tensorflow as tf
 from tensorflow.keras.models import Sequential, Model
-from tensorflow.keras.layers import Conv3D, LSTM, Dense, Dropout, Bidirectional, MaxPool3D, Activation, Reshape, SpatialDropout3D, BatchNormalization, TimeDistributed, Flatten
+from tensorflow.keras.layers import Conv3D, LSTM, Dense, Dropout, Bidirectional, MaxPool3D, Activation, Reshape, SpatialDropout3D, BatchNormalization, TimeDistributed, Flatten, Input
 import numpy as np
 import logging
 
@@ -16,33 +15,35 @@ os.makedirs('models', exist_ok=True)
 
 def create_lipnet_model():
     """Create the LipNet model architecture"""
-    model = Sequential()
-
-    # 3D convolutional layers
-    model.add(Conv3D(128, 3, input_shape=(75, 46, 140, 1), padding='same'))
-    model.add(Activation('relu'))
-    model.add(MaxPool3D((1, 2, 2)))
-
-    model.add(Conv3D(256, 3, padding='same'))
-    model.add(Activation('relu'))
-    model.add(MaxPool3D((1, 2, 2)))
-
-    model.add(Conv3D(75, 3, padding='same'))
-    model.add(Activation('relu'))
-    model.add(MaxPool3D((1, 2, 2)))
-
-    model.add(TimeDistributed(Flatten()))
-
-    # Bidirectional LSTM layers
-    model.add(Bidirectional(LSTM(128, kernel_initializer='Orthogonal', return_sequences=True)))
-    model.add(Dropout(.5))
-
-    model.add(Bidirectional(LSTM(128, kernel_initializer='Orthogonal', return_sequences=True)))
-    model.add(Dropout(.5))
-
-    # Output layer
-    model.add(Dense(41, kernel_initializer='he_normal', activation='softmax'))
+    # Use the functional API for more flexibility
+    inputs = Input(shape=(75, 46, 140, 1))
     
+    # 3D convolutional layers
+    x = Conv3D(128, 3, padding='same')(inputs)
+    x = Activation('relu')(x)
+    x = MaxPool3D((1, 2, 2))(x)
+    
+    x = Conv3D(256, 3, padding='same')(x)
+    x = Activation('relu')(x)
+    x = MaxPool3D((1, 2, 2))(x)
+    
+    x = Conv3D(75, 3, padding='same')(x)
+    x = Activation('relu')(x)
+    x = MaxPool3D((1, 2, 2))(x)
+    
+    x = TimeDistributed(Flatten())(x)
+    
+    # Bidirectional LSTM layers
+    x = Bidirectional(LSTM(128, kernel_initializer='Orthogonal', return_sequences=True))(x)
+    x = Dropout(.5)(x)
+    
+    x = Bidirectional(LSTM(128, kernel_initializer='Orthogonal', return_sequences=True))(x)
+    x = Dropout(.5)(x)
+    
+    # Output layer
+    outputs = Dense(41, kernel_initializer='he_normal', activation='softmax')(x)
+    
+    model = Model(inputs=inputs, outputs=outputs)
     return model
 
 def create_embedding_model(lipnet_model):
@@ -54,48 +55,27 @@ def create_embedding_model(lipnet_model):
     )
     return embedding_model
 
-def download_pretrained_weights():
-    """Download pre-trained weights for LipNet"""
-    # URL for pre-trained weights
-    # Note: This is a placeholder URL. In a real scenario, you would use the actual URL to the weights file
-    weights_url = "https://github.com/BMehar98/Lip-Reading-Web-Application/raw/main/checkpoint"
-    weights_path = os.path.join('models', 'lipnet_weights')
-    
-    try:
-        logger.info(f"Downloading pre-trained weights from {weights_url}")
-        response = requests.get(weights_url, stream=True)
-        response.raise_for_status()
-        
-        with open(weights_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        
-        logger.info(f"Weights downloaded successfully to {weights_path}")
-        return weights_path
-    except Exception as e:
-        logger.error(f"Error downloading weights: {e}")
-        return None
+def compile_model(model):
+    """Compile the model with appropriate loss and optimizer"""
+    model.compile(
+        optimizer='adam',
+        loss='categorical_crossentropy',
+        metrics=['accuracy']
+    )
+    return model
 
 def main():
-    """Main function to download and prepare the LipNet model"""
+    """Main function to prepare the LipNet model"""
     try:
+        # Create necessary directories
+        os.makedirs('models', exist_ok=True)
+        
         # Create the LipNet model
         logger.info("Creating LipNet model architecture")
         lipnet_model = create_lipnet_model()
         
-        # Download pre-trained weights
-        weights_path = download_pretrained_weights()
-        if weights_path is None:
-            logger.error("Failed to download weights. Exiting.")
-            return
-        
-        # Load the weights
-        try:
-            logger.info("Loading pre-trained weights")
-            lipnet_model.load_weights(weights_path)
-        except Exception as e:
-            logger.error(f"Error loading weights: {e}")
-            logger.info("Proceeding with randomly initialized weights")
+        # Compile the model
+        compile_model(lipnet_model)
         
         # Create the embedding model
         logger.info("Creating embedding model")
@@ -111,7 +91,7 @@ def main():
         logger.info(f"Saving embedding model to {embedding_model_path}")
         embedding_model.save(embedding_model_path)
         
-        logger.info("Models saved successfully!")
+        logger.info("Models created and saved successfully!")
         
         # Print model summary
         logger.info("LipNet Model Summary:")
