@@ -8,6 +8,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score
 import logging
+from demographic_utils import augment_features_with_demographics, get_speaker_from_path
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -118,18 +119,21 @@ def load_training_data(data_dir='data'):
                 # Get LipNet embeddings
                 embeddings = get_lipnet_embeddings(frames, lipnet_model)
                 
+                # Augment embeddings with demographic features
+                augmented_embeddings = augment_features_with_demographics(embeddings, video_path)
+                
                 # Add to dataset
-                X.append(embeddings)
+                X.append(augmented_embeddings)
                 y.append(phrase_idx)
                 
-                logger.info(f"Processed {video_file} for phrase: {phrase}")
-                
+                logger.info(f"Processed {video_file} for phrase: {phrase} (Speaker: {get_speaker_from_path(video_path)})")
             except Exception as e:
                 logger.error(f"Error processing {video_file}: {e}")
+                continue
     
     return np.array(X), np.array(y)
 
-def train_classifier(X, y):
+def train_classifier(X, y, demographic_feature_count=4):
     """Train a classifier on the embeddings with enhanced accuracy"""
     from sklearn.svm import SVC
     from sklearn.ensemble import VotingClassifier, GradientBoostingClassifier
@@ -304,6 +308,9 @@ def train_classifier(X, y):
             ('scaler', scaler),
             ('classifier', final_ensemble)
         ])
+        
+        # Store demographic feature count for future reference
+        pipeline.demographic_feature_count = demographic_feature_count
         
         return pipeline
 

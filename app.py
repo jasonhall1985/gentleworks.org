@@ -6,6 +6,7 @@ import tensorflow as tf
 import pickle
 from tensorflow.keras.models import load_model
 import logging
+from demographic_utils import augment_features_with_demographics
 
 app = Flask(__name__)
 
@@ -55,6 +56,9 @@ def predict():
     if video_file.filename == '':
         return jsonify({"error": "Empty video file"}), 400
     
+    # Get demographic information if provided
+    demographic = request.form.get('demographic', 'male_under_50')  # Default to male_under_50 if not specified
+    
     try:
         # Save the uploaded video temporarily
         temp_path = 'temp_video.mp4'
@@ -66,8 +70,12 @@ def predict():
         # Get LipNet embeddings
         embeddings = get_lipnet_embeddings(frames)
         
+        # Augment embeddings with demographic features
+        video_path = temp_path  # Use the temp path for demographic extraction
+        augmented_embeddings = augment_features_with_demographics(embeddings, video_path, demographic)
+        
         # Make prediction using the classifier
-        prediction_idx, confidence = predict_phrase(embeddings)
+        prediction_idx, confidence = predict_phrase(augmented_embeddings)
         
         # Clean up temporary file
         if os.path.exists(temp_path):
